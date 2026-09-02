@@ -45,20 +45,67 @@ def test_opening_balance_absorbs_first_payment(cfg):
     assert ob.settlements[0].pay_date == date(2025, 4, 8)  # cleared by first payment
 
 
+# --- TDS & Sales treated as receipts -------------------------------------------
+
+def test_tds_and_sales_settle_as_receipts(cfg):
+    # Punjab: TDS Journals (21,045.97) and a contra Sales Tax Invoice (453,028)
+    # now net open items just like a Payment, tracked in their own totals.
+    res = process_file(PUNJAB, cfg)
+    assert res.fifo.tds_total == pytest.approx(21045.97, abs=0.01)
+    assert res.fifo.sales_total == pytest.approx(453028.0, abs=0.01)
+    assert res.fifo.settlement_total == pytest.approx(
+        res.fifo.payment_total + 21045.97 + 453028.0, abs=0.01
+    )
+    sources = {s.source for a in res.disallowance.assessments for s in a.item.settlements}
+    assert {"Payment", "TDS", "Sales"} <= sources
+
+
+def test_green_wood_sales_receipt_present(cfg):
+    res = process_file(GREEN, cfg)
+    assert res.fifo.sales_total == pytest.approx(103132.0, abs=0.01)
+    assert res.fifo.tds_total == pytest.approx(0.0)
+
+
+def test_tds_and_sales_no_longer_flagged_but_credit_note_is(cfg):
+    # The only remaining flagged entry in Punjab is the credit-side Credit Note;
+    # the TDS Journals and the Sales Tax Invoice are now settled, not flagged.
+    res = process_file(PUNJAB, cfg)
+    flagged_types = [f.vch_type for f in res.fifo.flagged]
+    assert flagged_types == ["Credit Note"]
+    assert not any(f.vch_type in ("Journal", "Tax Invoice") for f in res.fifo.flagged)
+
+
+def test_netting_reduces_disallowance_vs_payments_only(cfg):
+    # Turning off the TDS keyword (so TDS journals stay flagged) must not lower
+    # disallowance below the full-netting run -- i.e. netting can only reduce it.
+    from msme_tool.fifo import settle
+    from msme_tool.disallowance import assess
+    from msme_tool.reader import read_ledger
+
+    ledger = read_ledger(PUNJAB)
+    full = assess(settle(ledger), ledger.period_end, 45)
+    no_tds = assess(settle(ledger, tds_account_keywords=()), ledger.period_end, 45)
+    assert no_tds.total_disallowed >= full.total_disallowed
+
+
 # --- disallowance ---------------------------------------------------------------
 
 def test_green_wood_no_disallowance_strict_year_end(cfg):
-    # Only unpaid invoice is dated 30-Mar-26; window ends mid-May -> within time.
+    # Only unpaid invoice is dated 28-Mar-26; window ends mid-May -> within time.
+    # A contra Sales (Tax Invoice) receipt of 103,132 nets against it, leaving
+    # 182,916 - 103,132 = 79,784 outstanding at year-end.
     res = process_file(GREEN, cfg)
     assert res.disallowance.total_disallowed == pytest.approx(0.0)
     last = res.disallowance.assessments[-1]
     assert last.status == STATUS_WITHIN_TIME
-    assert last.unpaid_at_period_end == pytest.approx(182916.0)
+    assert last.unpaid_at_period_end == pytest.approx(79784.0)
 
 
 def test_punjab_disallowance_regression(cfg):
+    # TDS (21,045.97) and contra Sales (453,028) now settle open items under FIFO,
+    # lowering the disallowance from the payment-only figure of 3,714,071.73.
     res = process_file(PUNJAB, cfg)
-    assert res.disallowance.total_disallowed == pytest.approx(3714071.73, abs=0.01)
+    assert res.disallowance.total_disallowed == pytest.approx(3239997.76, abs=0.01)
     statuses = {a.status for a in res.disallowance.assessments}
     assert STATUS_DISALLOWED in statuses
 

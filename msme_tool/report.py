@@ -32,9 +32,10 @@ _DATE = "dd-mmm-yyyy"
 _BANNER = (
     "ASSUMPTIONS: every party file is treated as an in-scope Micro/Small supplier "
     "(Medium/non-MSME suppliers are NOT excluded here - verify separately). "
-    "Payment window assumed per config (default 45 days). Only Payment vouchers "
-    "settle invoices under FIFO; Journals/Credit Notes/contra sales are flagged, "
-    "not netted. Opening balances are aged from the period start. "
+    "Payment window assumed per config (default 45 days). Payment vouchers, contra "
+    "Sales (Tax Invoice) and TDS (Journal to a TDS account) settle invoices under "
+    "FIFO as receipts; other Journals/Credit Notes are flagged, not netted. "
+    "Opening balances are aged from the period start. "
     "Interest = 3x RBI bank rate, monthly rests - verify the rate schedule."
 )
 
@@ -144,7 +145,8 @@ def _fmt_settlements(item) -> str:
     if not item.settlements:
         return ""
     return "; ".join(
-        f"{s.pay_date:%d-%b-%y}: {s.amount:,.2f}" + (f" (#{s.pay_vch_no})" if s.pay_vch_no else "")
+        f"{s.pay_date:%d-%b-%y}: {s.amount:,.2f} [{s.source}]"
+        + (f" (#{s.pay_vch_no})" if s.pay_vch_no else "")
         for s in item.settlements
     )
 
@@ -159,6 +161,14 @@ def _build_party_sheet(wb: Workbook, res: PartyResult, used: set[str]) -> None:
         f"File closing: {res.ledger.closing_balance}  |  Recon drift: {res.reconciliation_drift}"
     )
     ws.cell(row=2, column=1, value=meta)
+
+    fifo = res.fifo
+    settle_meta = (
+        f"Receipts settling invoices (FIFO)  |  Payments: {fifo.payment_total:,.2f}  |  "
+        f"TDS: {fifo.tds_total:,.2f}  |  Sales: {fifo.sales_total:,.2f}  |  "
+        f"Total: {fifo.settlement_total:,.2f}"
+    )
+    ws.cell(row=3, column=1, value=settle_meta).font = Font(italic=True, color="1F4E78")
 
     headers = [
         "Inv date", "Vch no", "Type", "Amount", "Appointed day",

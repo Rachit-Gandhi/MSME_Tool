@@ -26,7 +26,7 @@ class PartyResult:
 
 def process_file(path: str, cfg: Config) -> PartyResult:
     ledger = read_ledger(path)
-    fifo = settle(ledger)
+    fifo = settle(ledger, cfg.tds_account_keywords)
 
     agreed_days = cfg.agreed_days_for(ledger.party)
     as_on = cfg.as_on_for(ledger.period_end)

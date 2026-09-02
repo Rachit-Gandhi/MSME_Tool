@@ -7,9 +7,13 @@ into three buckets that drive the FIFO engine:
                  (``Purchase`` and ``Opening Balance``). These are the invoices
                  that FIFO settles and that §43B(h) may disallow.
 * ``payment`` -- a ``Payment`` debit that settles the oldest open items.
-* ``flagged`` -- anything else (``Journal``, ``Credit Note``, contra
-                 ``Tax Invoice`` sale, unknown types). Per the agreed rule these
-                 are *never* auto-netted; they are reported for manual review.
+* ``sales``   -- a contra ``Tax Invoice`` debit (goods sold back to the party).
+                 Treated as a receipt: it settles open items under FIFO.
+* ``tds``     -- a ``Journal`` debit to a TDS account (tax withheld on purchase).
+                 Also a receipt: it settles open items under FIFO.
+* ``flagged`` -- anything else (non-TDS ``Journal``, ``Credit Note``, unknown
+                 types). Per the agreed rule these are *never* auto-netted; they
+                 are reported for manual review.
 """
 
 from __future__ import annotations
@@ -23,23 +27,47 @@ from datetime import date
 OPEN_VCH_TYPES = {"purchase", "opening balance"}
 # Debit-side voucher type that settles open items under pure FIFO.
 PAYMENT_VCH_TYPES = {"payment"}
+# Contra sales: a debit that settles open items just like a payment.
+SALES_VCH_TYPES = {"tax invoice"}
+# TDS is posted via Journal; only journals to a TDS account count (keyword match).
+TDS_VCH_TYPES = {"journal"}
+DEFAULT_TDS_ACCOUNT_KEYWORDS = ("tds",)
 
 OPENING_BALANCE = "opening balance"
 
+# Settlement-kind -> human label used on Settlement.source and in the report.
+KIND_TO_SOURCE = {"payment": "Payment", "tds": "TDS", "sales": "Sales"}
+# Kinds that settle open items under FIFO (all debit-side receipts).
+SETTLEMENT_KINDS = frozenset(KIND_TO_SOURCE)
 
-def classify(vch_type: str | None, particulars: str | None) -> str:
-    """Return one of ``"open"``, ``"payment"`` or ``"flagged"`` for a row.
+
+def classify(
+    vch_type: str | None,
+    particulars: str | None,
+    account: str | None = None,
+    tds_account_keywords: tuple[str, ...] = DEFAULT_TDS_ACCOUNT_KEYWORDS,
+) -> str:
+    """Return the settlement kind for a row.
+
+    One of ``"open"``, ``"payment"``, ``"sales"``, ``"tds"`` or ``"flagged"``.
 
     ``vch_type`` is the Tally "Vch Type" cell; ``particulars`` is the By/To
-    marker. An Opening Balance row carries no Vch Type in Tally, so it is
-    detected from the account name (handled by the reader, which passes
-    ``"Opening Balance"`` as ``vch_type``).
+    marker; ``account`` is the contra account name (col C), used to tell a TDS
+    ``Journal`` apart from any other journal. An Opening Balance row carries no
+    Vch Type in Tally, so it is detected from the account name (handled by the
+    reader, which passes ``"Opening Balance"`` as ``vch_type``).
     """
     vt = (vch_type or "").strip().lower()
     if vt in OPEN_VCH_TYPES:
         return "open"
     if vt in PAYMENT_VCH_TYPES:
         return "payment"
+    if vt in SALES_VCH_TYPES:
+        return "sales"
+    if vt in TDS_VCH_TYPES:
+        acct = (account or "").strip().lower()
+        if any(kw in acct for kw in tds_account_keywords):
+            return "tds"
     return "flagged"
 
 
@@ -58,7 +86,7 @@ class Transaction:
 
     @property
     def kind(self) -> str:
-        return classify(self.vch_type, self.particulars)
+        return classify(self.vch_type, self.particulars, self.account)
 
     @property
     def is_opening_balance(self) -> bool:
@@ -67,11 +95,12 @@ class Transaction:
 
 @dataclass
 class Settlement:
-    """One FIFO allocation of a payment against an open item."""
+    """One FIFO allocation of a receipt (payment/TDS/sales) against an open item."""
 
     pay_date: date
     amount: float
     pay_vch_no: str | None
+    source: str = "Payment"      # "Payment" | "TDS" | "Sales"
 
 
 @dataclass

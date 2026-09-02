@@ -5,4 +5,4 @@ supplier, the income-tax disallowance under section 43B(h) and the interest
 liability under section 16 of the MSMED Act, 2006.
 """
 
-__version__ = "0.1.0"
+__version__ = "1.1.0"

@@ -25,6 +25,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from .interest import RateSchedule
+from .model import DEFAULT_TDS_ACCOUNT_KEYWORDS
 
 # Indicative RBI bank-rate history (annual, as fractions). VERIFY before use.
 DEFAULT_BANK_RATE_SCHEDULE = [
@@ -41,6 +42,7 @@ class Config:
     per_party_agreed_days: dict[str, int] = field(default_factory=dict)
     opening_balance_days: int | None = None
     as_on_date: date | None = None
+    tds_account_keywords: tuple[str, ...] = DEFAULT_TDS_ACCOUNT_KEYWORDS
     bank_rate_schedule: list[tuple[date, float]] = field(
         default_factory=lambda: [
             (datetime.strptime(d, "%Y-%m-%d").date(), r)
@@ -80,6 +82,10 @@ def load_config(path: str | Path | None) -> Config:
         cfg.opening_balance_days = int(data["opening_balance_days"])
     if data.get("as_on_date"):
         cfg.as_on_date = datetime.strptime(data["as_on_date"], "%Y-%m-%d").date()
+    if data.get("tds_account_keywords"):
+        cfg.tds_account_keywords = tuple(
+            str(k).strip().lower() for k in data["tds_account_keywords"] if str(k).strip()
+        )
     if data.get("bank_rate_schedule"):
         cfg.bank_rate_schedule = [
             (datetime.strptime(d, "%Y-%m-%d").date(), float(r))
@@ -95,12 +101,17 @@ def write_default_config(path: str | Path) -> None:
         "per_party_agreed_days": {},
         "opening_balance_days": None,
         "as_on_date": None,
+        "tds_account_keywords": list(DEFAULT_TDS_ACCOUNT_KEYWORDS),
         "bank_rate_schedule": DEFAULT_BANK_RATE_SCHEDULE,
         "_notes": [
             "as_on_date: null uses each ledger's period end (31-Mar).",
             "opening_balance_days: null ages the 1-April opening balance like any "
             "other item (agreed days); set a smaller number to assume it expires "
             "that many days after the period start. Regular purchases are unaffected.",
+            "tds_account_keywords: a Journal voucher is treated as a TDS receipt "
+            "(settles invoices like a payment) only when its contra account name "
+            "contains one of these substrings (case-insensitive). Contra Sales "
+            "(Tax Invoice) debits always settle; other journals stay flagged.",
             "bank_rate_schedule entries are [effective_date, annual_bank_rate_fraction].",
             "Section 16 interest = 3x these rates, compounded with monthly rests.",
             "VERIFY the bank-rate schedule against the actual RBI notifications.",

@@ -29,7 +29,8 @@ def test_green_wood_transaction_counts():
     kinds = [t.kind for t in L.transactions]
     assert kinds.count("open") == 6
     assert kinds.count("payment") == 4
-    assert kinds.count("flagged") == 1  # the contra Tax Invoice sale
+    assert kinds.count("sales") == 1     # the contra Tax Invoice, now a receipt
+    assert kinds.count("flagged") == 0
 
 
 def test_credit_minus_debit_equals_closing():
