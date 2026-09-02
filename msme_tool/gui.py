@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import sys
 import traceback
+from datetime import datetime
 from pathlib import Path
 
 import tkinter as tk
@@ -47,13 +48,17 @@ class MsmeApp(ttk.Frame):
         master.columnconfigure(0, weight=1)
         master.rowconfigure(0, weight=1)
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(3, weight=1)
+        self.rowconfigure(4, weight=1)
 
         self._files: list[str] = []
         self._results: list[PartyResult] = []
+        # Seed the editable fields (incl. bank rates) from config.json next to the
+        # exe, or from built-in defaults when it is absent (standalone exe).
+        self._base_cfg = load_config(_app_dir() / "config.json")
 
         self._build_file_row()
         self._build_options_row()
+        self._build_rates_row()
         self._build_action_row()
         self._build_summary()
 
@@ -106,9 +111,47 @@ class MsmeApp(ttk.Frame):
             justify="left",
         ).grid(row=1, column=0, columnspan=4, sticky="w", pady=(6, 0))
 
+    def _build_rates_row(self) -> None:
+        box = ttk.LabelFrame(
+            self,
+            text="Bank rate schedule  (annual RBI bank rate as a fraction; §16 interest = 3× this)",
+            padding=8,
+        )
+        box.grid(row=2, column=0, sticky="ew", pady=(0, 8))
+        box.columnconfigure(0, weight=1)
+
+        self._rates_tree = ttk.Treeview(
+            box, columns=("date", "rate"), show="headings", height=4
+        )
+        self._rates_tree.heading("date", text="Effective date (YYYY-MM-DD)")
+        self._rates_tree.heading("rate", text="Annual rate (e.g. 0.0575)")
+        self._rates_tree.column("date", width=200, anchor="center")
+        self._rates_tree.column("rate", width=170, anchor="center")
+        self._rates_tree.grid(row=0, column=0, rowspan=3, sticky="ew", padx=(0, 8))
+        self._rates_tree.bind("<<TreeviewSelect>>", self._on_rate_select)
+
+        for eff, rate in self._base_cfg.bank_rate_schedule:
+            self._rates_tree.insert("", "end", values=(eff.strftime("%Y-%m-%d"), rate))
+
+        entry = ttk.Frame(box)
+        entry.grid(row=0, column=1, sticky="n")
+        ttk.Label(entry, text="Date").grid(row=0, column=0, sticky="w")
+        self._rate_date = tk.StringVar()
+        ttk.Entry(entry, width=14, textvariable=self._rate_date).grid(row=0, column=1, padx=4)
+        ttk.Label(entry, text="Rate").grid(row=1, column=0, sticky="w", pady=(2, 0))
+        self._rate_val = tk.StringVar()
+        ttk.Entry(entry, width=14, textvariable=self._rate_val).grid(row=1, column=1, padx=4, pady=(2, 0))
+
+        ttk.Button(box, text="Add / Update", command=self._add_or_update_rate).grid(
+            row=1, column=1, sticky="ew"
+        )
+        ttk.Button(box, text="Remove selected", command=self._remove_rate).grid(
+            row=2, column=1, sticky="ew", pady=(4, 0)
+        )
+
     def _build_action_row(self) -> None:
         box = ttk.Frame(self)
-        box.grid(row=2, column=0, sticky="ew", pady=(0, 8))
+        box.grid(row=3, column=0, sticky="ew", pady=(0, 8))
         ttk.Button(box, text="Process", command=self._process).grid(row=0, column=0)
         self._download_btn = ttk.Button(
             box, text="Download Excel…", command=self._download, state="disabled"
@@ -117,7 +160,7 @@ class MsmeApp(ttk.Frame):
 
     def _build_summary(self) -> None:
         box = ttk.LabelFrame(self, text="Summary", padding=8)
-        box.grid(row=3, column=0, sticky="nsew")
+        box.grid(row=4, column=0, sticky="nsew")
         box.columnconfigure(0, weight=1)
         box.rowconfigure(0, weight=1)
         self._summary = ScrolledText(box, height=14, wrap="word", state="disabled")
@@ -143,12 +186,71 @@ class MsmeApp(ttk.Frame):
         self._listbox.delete(0, "end")
         self._files.clear()
 
+    # --- bank-rate editor ------------------------------------------------------
+
+    def _on_rate_select(self, _event=None) -> None:
+        sel = self._rates_tree.selection()
+        if sel:
+            d, r = self._rates_tree.item(sel[0], "values")
+            self._rate_date.set(d)
+            self._rate_val.set(r)
+
+    def _add_or_update_rate(self) -> None:
+        d = self._rate_date.get().strip()
+        r = self._rate_val.get().strip()
+        try:
+            datetime.strptime(d, "%Y-%m-%d")
+            float(r)
+        except ValueError:
+            messagebox.showerror(
+                "Invalid rate",
+                "Date must be YYYY-MM-DD and the rate a number like 0.0575.",
+            )
+            return
+        for iid in self._rates_tree.get_children():
+            if self._rates_tree.item(iid, "values")[0] == d:
+                self._rates_tree.item(iid, values=(d, r))  # update same-date entry
+                break
+        else:
+            self._rates_tree.insert("", "end", values=(d, r))
+        self._resort_rates()
+        self._rate_date.set("")
+        self._rate_val.set("")
+
+    def _resort_rates(self) -> None:
+        rows = sorted(
+            (self._rates_tree.item(i, "values") for i in self._rates_tree.get_children()),
+            key=lambda v: v[0],
+        )
+        for i in self._rates_tree.get_children():
+            self._rates_tree.delete(i)
+        for v in rows:
+            self._rates_tree.insert("", "end", values=v)
+
+    def _remove_rate(self) -> None:
+        for iid in self._rates_tree.selection():
+            self._rates_tree.delete(iid)
+
+    def _collect_rate_schedule(self) -> list[tuple]:
+        schedule = []
+        for iid in self._rates_tree.get_children():
+            d, r = self._rates_tree.item(iid, "values")
+            schedule.append((datetime.strptime(d, "%Y-%m-%d").date(), float(r)))
+        return schedule
+
     # --- config from the option fields -----------------------------------------
 
     def _build_config(self) -> Config:
         cfg = load_config(_app_dir() / "config.json")
-        cfg.opening_balance_days = int(self._ob_days.get())
-        cfg.default_agreed_days = int(self._agreed_days.get())
+        try:
+            cfg.opening_balance_days = int(self._ob_days.get())
+            cfg.default_agreed_days = int(self._agreed_days.get())
+        except ValueError:
+            raise ValueError("Day counts must be whole numbers.")
+        schedule = self._collect_rate_schedule()
+        if not schedule:
+            raise ValueError("Add at least one bank-rate entry.")
+        cfg.bank_rate_schedule = schedule
         return cfg
 
     # --- processing ------------------------------------------------------------
@@ -159,8 +261,8 @@ class MsmeApp(ttk.Frame):
             return
         try:
             cfg = self._build_config()
-        except ValueError:
-            messagebox.showerror("Invalid input", "Day counts must be whole numbers.")
+        except ValueError as e:
+            messagebox.showerror("Invalid input", str(e))
             return
 
         results: list[PartyResult] = []
@@ -236,7 +338,7 @@ class MsmeApp(ttk.Frame):
 def main() -> int:
     root = tk.Tk()
     root.title("MSME 43B(h) Tool")
-    root.minsize(640, 520)
+    root.minsize(700, 660)
     MsmeApp(root)
     root.mainloop()
     return 0
