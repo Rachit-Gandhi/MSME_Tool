@@ -1,0 +1,31 @@
+{
+  "default_agreed_days": 45,
+  "per_party_agreed_days": {},
+  "opening_balance_days": null,
+  "as_on_date": null,
+  "bank_rate_schedule": [
+    [
+      "2023-02-08",
+      0.0675
+    ],
+    [
+      "2025-02-07",
+      0.065
+    ],
+    [
+      "2025-04-09",
+      0.0625
+    ],
+    [
+      "2025-06-06",
+      0.0575
+    ]
+  ],
+  "_notes": [
+    "as_on_date: null uses each ledger's period end (31-Mar).",
+    "opening_balance_days: null ages the 1-April opening balance like any other item (agreed days); set a smaller number to assume it expires that many days after the period start. Regular purchases are unaffected.",
+    "bank_rate_schedule entries are [effective_date, annual_bank_rate_fraction].",
+    "Section 16 interest = 3x these rates, compounded with monthly rests.",
+    "VERIFY the bank-rate schedule against the actual RBI notifications."
+  ]
+}

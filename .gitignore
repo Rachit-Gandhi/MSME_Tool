@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec.bak
+output/
+input/*.xls
+input/*.xlsx
+.pytest_cache/
+.DS_Store
